@@ -31,14 +31,20 @@ def sms_get():
     }
 
 @app.post("/sms")
-async def sms_webhook(
-    From: str = Form(...),
-    Body: str = Form(...),
-):
-    """
-    Twilio will POST form data: 'From', 'Body', etc. 
-    The 'From' and 'Body' fields are parsed via FastAPI's Form.
-    """
+async def sms_webhook(request: Request):
+    # Debug: Print raw request
+    print("Received webhook request")
+    body = await request.body()
+    print(f"Raw body: {body}")
+    
+    # Original form parsing
+    form = await request.form()
+    From = form.get("From", "")
+    Body = form.get("Body", "")
+    
+    print(f"Parsed From: {From}")
+    print(f"Parsed Body: {Body}")
+
     # Debug print (visible in Replit logs)
     print(f"** Incoming SMS from {From}: {Body}")
 
