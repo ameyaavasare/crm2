@@ -2,7 +2,8 @@ import os
 import openai
 import json
 from dotenv import load_dotenv
-from ..supabase_client import supabase
+# Changed to absolute import
+from supabase_client import supabase
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")

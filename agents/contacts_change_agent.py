@@ -1,7 +1,8 @@
 import os
 import openai
 from dotenv import load_dotenv
-from ..supabase_client import supabase
+# Changed to absolute import
+from supabase_client import supabase
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -90,7 +91,6 @@ def parse_contact_info(user_text: str) -> dict:
         )
         raw_content = response.choices[0].message.content.strip()
 
-        # Attempt to parse raw_content as JSON
         import json
         parsed = json.loads(raw_content)
         return {
