@@ -21,10 +21,32 @@ twilio_client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_T
 def read_root():
     return {"Hello": "CRM is running!"}
 
+# 1) Handle GET requests on /sms, so Twilio’s GET check won’t cause 405
+@app.get("/sms")
+def sms_get():
+    return {
+        "message": (
+            "Twilio should POST here. This GET is just to avoid 404/405 errors. "
+            "If you see this, ensure Twilio’s webhook method is POST."
+        )
+    }
+
+# 2) Optionally handle GET on /twilio/sms if Twilio tries /twilio/sms
+@app.get("/twilio/sms")
+def twilio_sms_get():
+    return {
+        "message": (
+            "Twilio should POST here. This GET is just to avoid 404/405 errors. "
+            "If you see this, ensure Twilio’s webhook method is POST."
+        )
+    }
+
+# 3) Now accept POST for either /sms or /twilio/sms
 @app.post("/sms")
+@app.post("/twilio/sms")
 async def sms_webhook(request: Request):
     """
-    This endpoint will receive incoming SMS from Twilio.
+    This endpoint will receive incoming SMS from Twilio via POST.
     Twilio will POST form data: 'From', 'Body', etc.
     """
     form_data = await request.form()
@@ -44,7 +66,6 @@ async def sms_webhook(request: Request):
     elif agent_type == "interaction_query":
         response_text = handle_interaction_query(message_body)
     else:
-        # Fallback
         response_text = (
             "I'm not sure how to handle that request. "
             "Try again with more context."
