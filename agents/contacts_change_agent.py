@@ -16,6 +16,9 @@ def handle_contacts_change(message: str) -> str:
 
     # Step 1: GPT parse
     contact_data = parse_contact_info(message)
+    # Debug print the parsed data
+    print("Parsed contact data:", contact_data)
+
     action = contact_data.get("action", "").lower()
 
     if action not in ["add", "update", "delete"]:
@@ -33,7 +36,7 @@ def handle_contacts_change(message: str) -> str:
         if not existing:
             return f"No contacts found matching '{name}' to delete."
         if len(existing) > 1:
-            # If multiple matches, we require a clearer name
+            # If multiple matches, require a clearer name
             matches = [c["name"] for c in existing]
             return (f"Found multiple contacts matching '{name}': {matches}\n"
                     f"Please specify more detail or the exact name to delete.")
@@ -52,7 +55,9 @@ def handle_contacts_change(message: str) -> str:
         if not contact_record.get("name"):
             return "Couldn’t find a contact name to add. Please include one."
         # Insert the new contact
-        supabase.table("contacts").insert(contact_record).execute()
+        response = supabase.table("contacts").insert(contact_record).execute()
+        # Debug print the Supabase response
+        print("Supabase insert response:", response)
         return f"Contact '{contact_record['name']}' added successfully."
 
     elif action == "update":

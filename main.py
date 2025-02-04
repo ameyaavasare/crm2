@@ -37,19 +37,19 @@ async def sms_webhook(request: Request):
     body = await request.body()
     print(f"Raw body: {body}")
     
-    # Original form parsing
+    # Parse form data from Twilio
     form = await request.form()
     From = form.get("From", "")
     Body = form.get("Body", "")
     
     print(f"Parsed From: {From}")
     print(f"Parsed Body: {Body}")
-
-    # Debug print (visible in Replit logs)
     print(f"** Incoming SMS from {From}: {Body}")
 
     # Step 1: classify the message
     agent_type = classify_message(Body)
+    # Debug print classification
+    print(f"** Classification result: {agent_type}")
 
     # Step 2: route to the correct agent
     if agent_type == "contacts_change":
