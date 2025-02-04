@@ -1,7 +1,7 @@
 import os
 import openai
+import json
 from dotenv import load_dotenv
-# Changed to absolute import
 from supabase_client import supabase
 
 load_dotenv()
@@ -9,74 +9,83 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def handle_contacts_change(message: str) -> str:
     """
-    Add, update, or delete a contact in a more conversational manner.
-    We'll parse the user message with GPT to extract fields:
-      name, phone, email, birthday, location, family members, etc.
-    If insufficient data is provided, we can ask the user to clarify.
+    Add, update, or delete a contact in a conversational manner.
+    We parse the user message with GPT for action, name, phone, email, birthday, etc.
+    If data is missing or multiple matches occur, we can highlight that and ask the user to clarify.
     """
 
-    # Step 1: Use GPT to parse user’s freeform text
+    # Step 1: GPT parse
     contact_data = parse_contact_info(message)
-
-    # Check if GPT found any intended action (add/update/delete)
     action = contact_data.get("action", "").lower()
+
     if action not in ["add", "update", "delete"]:
-        return (
-            "I’m not sure if you want to add, update, or delete a contact. "
-            "Please specify 'add', 'update', or 'delete' in your message."
-        )
+        return ("I’m not sure if you want to add, update, or delete a contact. "
+                "Please specify 'add', 'update', or 'delete' in your message.")
 
+    # For "delete":
     if action == "delete":
-        # For demonstration: we only do a naive delete by name
-        name = contact_data.get("name")
+        name = contact_data.get("name", "").strip()
         if not name:
-            return "I didn’t find a contact name to delete. Please specify."
-        supabase.table("contacts").delete().eq("name", name).execute()
-        return f"Contact '{name}' deleted successfully."
+            return "I didn’t see which contact to delete. Please provide their name."
 
-    # For 'add' or 'update', we gather fields
+        # Attempt partial match with iLike
+        existing = supabase.table("contacts").select("*").ilike("name", f"%{name}%").execute().data
+        if not existing:
+            return f"No contacts found matching '{name}' to delete."
+        if len(existing) > 1:
+            # If multiple matches, we require a clearer name
+            matches = [c["name"] for c in existing]
+            return (f"Found multiple contacts matching '{name}': {matches}\n"
+                    f"Please specify more detail or the exact name to delete.")
+        # Exactly one match:
+        supabase.table("contacts").delete().eq("uuid", existing[0]["uuid"]).execute()
+        return f"Contact '{existing[0]['name']}' deleted successfully."
+
+    # For 'add' or 'update'
     contact_record = {}
     for field in ["name", "phone", "email", "birthday", "family_members", "description"]:
-        if contact_data.get(field):
-            contact_record[field] = contact_data[field]
+        val = contact_data.get(field, "").strip()
+        if val:
+            contact_record[field] = val
 
     if action == "add":
         if not contact_record.get("name"):
-            return "Couldn’t find a name. Please mention the contact’s name to add."
+            return "Couldn’t find a contact name to add. Please include one."
+        # Insert the new contact
         supabase.table("contacts").insert(contact_record).execute()
         return f"Contact '{contact_record['name']}' added successfully."
 
     elif action == "update":
-        name = contact_data.get("name")
+        name = contact_data.get("name", "").strip()
         if not name:
-            return "Couldn’t find a contact name to update. Please include one."
-        # Example: find contact by name, then update fields
-        supabase.table("contacts").update(contact_record).eq("name", name).execute()
-        return f"Contact '{name}' updated successfully."
+            return "Please specify which contact’s name to update."
+
+        # Step A: find existing contact(s) by partial name
+        existing = supabase.table("contacts").select("*").ilike("name", f"%{name}%").execute().data
+        if not existing:
+            return f"No contacts found matching '{name}' to update."
+        if len(existing) > 1:
+            # If multiple found, ask user to clarify
+            matches = [c["name"] for c in existing]
+            return (f"Found multiple contacts matching '{name}': {matches}\n"
+                    f"Please clarify which one you want to update.")
+        # Exactly one match: update that record
+        supabase.table("contacts").update(contact_record).eq("uuid", existing[0]["uuid"]).execute()
+        return f"Contact '{existing[0]['name']}' updated successfully."
 
     return "No valid action specified."
 
 def parse_contact_info(user_text: str) -> dict:
     """
-    Calls GPT to parse contact info from a conversational user message.
-    Expects a JSON-like response with fields:
-       action -> str ("add"/"update"/"delete")
-       name -> str
-       phone -> str
-       email -> str
-       birthday -> str
-       family_members -> str
-       description -> str
-       location -> str (not stored yet, but you can expand)
+    Uses GPT to parse fields:
+      action: "add"|"update"|"delete"
+      name, phone, email, birthday, family_members, description
     """
     system_prompt = (
         "You are a specialized parser for contact changes in a personal CRM. "
-        "User messages may say something like: 'Hey, can you add Stamford Raffles? "
-        "He is from Singapore, phone +!9995551234, email stamford@raffles.com, birthday 18 March 1900, 2 kids, etc.' "
-        "Extract the meaning into JSON with keys: action, name, phone, email, birthday, family_members, description. "
-        "Allowed actions: add, update, delete. If you’re unsure, action='add'. "
-        "If missing some fields, just leave them blank. "
-        "Output MUST be valid JSON, with the keys: action, name, phone, email, birthday, family_members, description."
+        "Possible actions: add, update, or delete. If unsure, default to 'add'. "
+        "If missing fields, just leave them blank. Output must be valid JSON with keys:"
+        "  action, name, phone, email, birthday, family_members, description."
     )
 
     try:
@@ -84,15 +93,12 @@ def parse_contact_info(user_text: str) -> dict:
             model="gpt-4o-2024-08-06",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text},
+                {"role": "user", "content": user_text}
             ],
             temperature=0,
             max_tokens=300,
         )
-        raw_content = response.choices[0].message.content.strip()
-
-        import json
-        parsed = json.loads(raw_content)
+        parsed = json.loads(response.choices[0].message.content.strip())
         return {
             "action": parsed.get("action", ""),
             "name": parsed.get("name", ""),
@@ -102,6 +108,5 @@ def parse_contact_info(user_text: str) -> dict:
             "family_members": parsed.get("family_members", ""),
             "description": parsed.get("description", ""),
         }
-    except Exception:
-        # If anything fails, return a blank dict
+    except:
         return {}

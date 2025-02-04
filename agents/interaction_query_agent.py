@@ -2,7 +2,6 @@ import os
 import openai
 import json
 from dotenv import load_dotenv
-# Changed to absolute import
 from supabase_client import supabase
 
 load_dotenv()
@@ -10,66 +9,60 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def handle_interaction_query(message: str) -> str:
     """
-    Query interactions from the 'interactions' table in a more conversational manner.
-    Example user request: "Show me the last 3 times I spoke with Stamford Raffles."
-    We'll parse 'contact_name' and a limit or date range. If limit is missing, default e.g. 5.
-    Then we find the contact, select from interactions, and return a simple summary.
+    Query interactions in a more conversational manner.
+    1) parse user text for contact_name, limit, or date range,
+    2) partial-match contact,
+    3) fetch 'interactions' sorted by created_at desc,
+    4) return them as a summary.
     """
 
-    query_data = parse_interaction_query(message)
-    contact_name = query_data.get("contact_name")
-    limit_str = query_data.get("limit", "5")
+    data = parse_interaction_query(message)
+    contact_name = data.get("contact_name", "").strip()
+    limit_val = data.get("limit", "5").strip()
+
     try:
-        limit_val = int(limit_str)
-    except ValueError:
-        limit_val = 5
+        limit = int(limit_val)
+    except:
+        limit = 5
 
     if not contact_name:
-        return "I couldn’t find a contact name to look up. Please mention who you're asking about."
+        return "I’m not sure whose interactions you want to see. Please name the contact."
 
-    # Find contact by name
-    contact_res = supabase.table("contacts").select("uuid").eq("name", contact_name).execute()
-    contact_rows = contact_res.data
-    if not contact_rows:
-        return f"No contact found with the name '{contact_name}'."
+    # partial match
+    possible = supabase.table("contacts").select("*").ilike("name", f"%{contact_name}%").execute().data
+    if not possible:
+        return f"No contacts found matching '{contact_name}'."
+    if len(possible) > 1:
+        # multiple matches
+        matches = [p["name"] for p in possible]
+        return (f"Found multiple contacts matching '{contact_name}': {matches}.\n"
+                "Please clarify the exact name or unique detail.")
+    contact_id = possible[0]["uuid"]
 
-    contact_uuid = contact_rows[0]["uuid"]
+    # get interactions
+    rows = (supabase.table("interactions")
+            .select("*")
+            .eq("contact_id", contact_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data)
 
-    # Query interactions
-    interaction_res = (
-        supabase.table("interactions")
-        .select("*")
-        .eq("contact_id", contact_uuid)
-        .order("created_at", desc=True)
-        .limit(limit_val)
-        .execute()
-    )
-    interactions = interaction_res.data
+    if not rows:
+        return f"No interactions found for '{possible[0]['name']}'."
 
-    if not interactions:
-        return f"No interactions found for {contact_name}."
-
-    # Summarize results
-    summary_lines = []
-    for i, row in enumerate(interactions, start=1):
-        note = row["note"]
-        created_at = row["created_at"]
-        summary_lines.append(f"{i}. {note} (on {created_at})")
-
-    return f"Here are the last {len(interactions)} interactions with {contact_name}:\n" + "\n".join(summary_lines)
+    lines = [f"Interaction {i+1}: {r['note']} (Date: {r['created_at']})" for i, r in enumerate(rows)]
+    return (f"Here are the last {len(rows)} interactions for {possible[0]['name']}:\n" +
+            "\n".join(lines))
 
 def parse_interaction_query(user_text: str) -> dict:
     """
-    Uses GPT to extract 'contact_name' and 'limit' (number of interactions requested).
-    If not specified, default limit to e.g. 5.
-    Returns { 'contact_name': str, 'limit': str }
+    GPT parser for 'contact_name' and 'limit' from user request. If no limit, default to '5'.
     """
     system_prompt = (
         "You are a specialized parser for queries about interactions in a personal CRM. "
-        "User messages might say: 'Can you tell me about the last 3 times I spoke with Stamford Raffles?' "
-        "Output MUST be valid JSON with 'contact_name' and 'limit'. "
-        "If the user doesn’t specify how many times, use '5' as limit. "
-        "If the name is missing, leave it blank. Example: {'contact_name': 'Stamford Raffles', 'limit': '3'}."
+        "User might say: 'Show me the last 3 times I spoke with John Doe' or 'All interactions with Jane' etc. "
+        "Output MUST be JSON with 'contact_name' and 'limit'. If limit not specified, use '1'."
     )
 
     try:
@@ -82,11 +75,10 @@ def parse_interaction_query(user_text: str) -> dict:
             temperature=0,
             max_tokens=300,
         )
-        raw_content = response.choices[0].message.content.strip()
-        parsed = json.loads(raw_content)
+        parsed = json.loads(response.choices[0].message.content.strip())
         return {
             "contact_name": parsed.get("contact_name", ""),
-            "limit": parsed.get("limit", "5"),
+            "limit": max(int(parsed.get("limit", "1")), 1)
         }
-    except Exception:
+    except:
         return {}
