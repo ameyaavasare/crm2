@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Request, Body, status
+from fastapi import FastAPI, Request, Form, status
 from fastapi.responses import JSONResponse
 from twilio.rest import Client
 from dotenv import load_dotenv
@@ -14,68 +14,57 @@ load_dotenv()
 
 app = FastAPI()
 
-# Twilio client (if needed for outbound messages)
+# Twilio client (optional for outbound messages)
 twilio_client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
 
 @app.get("/")
 def read_root():
     return {"Hello": "CRM is running!"}
 
-# 1) Handle GET requests on /sms, so Twilio’s GET check won’t cause 405
 @app.get("/sms")
 def sms_get():
+    """
+    Twilio should POST here. This GET helps avoid 404/405 errors if Twilio (or you) do a GET.
+    """
     return {
-        "message": (
-            "Twilio should POST here. This GET is just to avoid 404/405 errors. "
-            "If you see this, ensure Twilio’s webhook method is POST."
-        )
+        "message": "Send a POST request with Twilio form data to this endpoint."
     }
 
-# 2) Optionally handle GET on /twilio/sms if Twilio tries /twilio/sms
-@app.get("/twilio/sms")
-def twilio_sms_get():
-    return {
-        "message": (
-            "Twilio should POST here. This GET is just to avoid 404/405 errors. "
-            "If you see this, ensure Twilio’s webhook method is POST."
-        )
-    }
-
-# 3) Now accept POST for either /sms or /twilio/sms
 @app.post("/sms")
-@app.post("/twilio/sms")
-async def sms_webhook(request: Request):
+async def sms_webhook(
+    From: str = Form(...),
+    Body: str = Form(...),
+):
     """
-    This endpoint will receive incoming SMS from Twilio via POST.
-    Twilio will POST form data: 'From', 'Body', etc.
+    Twilio will POST form data: 'From', 'Body', etc. 
+    The 'From' and 'Body' fields are parsed via FastAPI's Form.
     """
-    form_data = await request.form()
-    from_number = form_data.get("From")
-    message_body = form_data.get("Body")
+    # Debug print (visible in Replit logs)
+    print(f"** Incoming SMS from {From}: {Body}")
 
-    # Step 1: Classify the incoming message
-    agent_type = classify_message(message_body)
+    # Step 1: classify the message
+    agent_type = classify_message(Body)
 
-    # Step 2: Route to the appropriate agent
+    # Step 2: route to the correct agent
     if agent_type == "contacts_change":
-        response_text = handle_contacts_change(message_body)
+        response_text = handle_contacts_change(Body)
     elif agent_type == "query_contacts":
-        response_text = handle_query_contacts(message_body)
+        response_text = handle_query_contacts(Body)
     elif agent_type == "interaction":
-        response_text = handle_interaction(message_body)
+        response_text = handle_interaction(Body)
     elif agent_type == "interaction_query":
-        response_text = handle_interaction_query(message_body)
+        response_text = handle_interaction_query(Body)
     else:
         response_text = (
             "I'm not sure how to handle that request. "
             "Try again with more context."
         )
 
-    # Optionally: respond via Twilio if desired
+    # Example of responding via Twilio (commented out by default):
     # twilio_client.messages.create(
     #     body=response_text,
     #     from_="YOUR_TWILIO_PHONE_NUMBER",
-    #     to=from_number
+    #     to=From
     # )
 
     return JSONResponse(
