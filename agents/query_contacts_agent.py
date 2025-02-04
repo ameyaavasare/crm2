@@ -1,8 +1,8 @@
-from ..supabase_client import supabase
+from supabase_client import supabase
 
 def handle_query_contacts(message: str) -> str:
     """
-    Construct a query to 'contacts' table in Supabase and return results.
+    Construct a query to the 'contacts' table in Supabase and return results.
     This is a placeholder for demonstration.
     """
     name_to_find = "John"  # naive placeholder
