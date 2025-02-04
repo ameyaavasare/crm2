@@ -1,0 +1,8 @@
+.env
+venv/
+__pycache__/
+*.pyc
+zzz_extract.txt
+zzz_extract.py
+zzz_additional_context.md
+documentation/
