@@ -7,6 +7,8 @@ from datetime import datetime
 
 import openai
 from dotenv import load_dotenv
+import logging
+from dateutil import parser as date_parser
 
 # Add the project root directory to Python path (if needed)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,6 +22,8 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 MODEL_NAME = "gpt-4o-mini"
 MAX_TOKENS = 150
 TEMPERATURE = 0.0
+
+logger = logging.getLogger(__name__)
 
 
 def format_phone_number(phone: str) -> str:
@@ -82,30 +86,111 @@ def parse_contact_message(message: str) -> dict:
 
 def prepare_contact_for_supabase(message: str) -> dict:
     """
-    Parse the message for contact details, add a UUID,
-    and format the phone number and birthday appropriately.
+    Extract contact information from the message.
+    
+    This function leverages GPT (via parse_contact_message) to extract structured details,
+    then normalizes the data for insertion into Supabase. The expected fields are:
+      - name: The full name of the contact.
+      - phone: The phone number, which will be formatted in E.164 style.
+      - email: The email address, or None if not provided.
+      - birthday: The birthday date (normalized to YYYY-MM-DD), or None.
+      - family_members: A comma-separated string of family member names, or None.
+      - description: A short description with extra details.
     """
-    contact = parse_contact_message(message)
-    if not contact:
-        return {}
+    logger.info("Preparing contact info for Supabase.")
+    
+    parsed_data = parse_contact_message(message)
+    logger.info(f"Parsed data from GPT: {parsed_data}")
+    
+    if parsed_data:
+        # Format the phone number using our helper
+        if parsed_data.get("phone"):
+            parsed_data["phone"] = format_phone_number(parsed_data["phone"])
+        
+        # Attempt to normalize the birthday to YYYY-MM-DD format if provided
+        if parsed_data.get("birthday"):
+            try:
+                dt = date_parser.parse(parsed_data["birthday"])
+                parsed_data["birthday"] = dt.strftime("%Y-%m-%d")
+            except Exception as e:
+                logger.error(f"Error formatting birthday '{parsed_data.get('birthday')}': {e}")
+        
+        # Ensure that all required fields exist. If any are not present, set them to None.
+        for field in ['name', 'phone', 'email', 'birthday', 'family_members', 'description']:
+            if field not in parsed_data:
+                parsed_data[field] = None
 
-    # Add a unique identifier
-    contact["uuid"] = str(uuid.uuid4())
+        return parsed_data
+    
+    # If parsing fails return an empty dict
+    return {}
 
-    # Format phone number if present
-    if contact.get("phone"):
-        contact["phone"] = format_phone_number(contact["phone"])
 
-    # Validate and reformat birthday if present
-    birthday = contact.get("birthday")
-    if birthday:
-        try:
-            dt = datetime.strptime(birthday, "%Y-%m-%d")
-            contact["birthday"] = dt.date().isoformat()
-        except ValueError:
-            contact["birthday"] = None
+def parse_message(message: str, existing_data: dict = None) -> dict:
+    """
+    Process the incoming text message for contact details.
+    Returns a dict with either:
+      - A prompt for missing information (for the initial turn), or
+      - A confirmation request if this is a follow-up turn.
+    
+    This version ensures that:
+      1) Once a request for additional info has been sent, only one turn is allowed –
+         any follow-up info is merged without re-prompting for missing fields.
+      2) Fields already provided are not overwritten by subsequent messages.
+    """
+    # Start with existing data if provided
+    contact_record = existing_data.copy() if existing_data else {}
 
-    return contact
+    # Update contact_record with new information from the message,
+    # but do not overwrite fields that already have a value.
+    new_data = prepare_contact_for_supabase(message)
+    if new_data:
+        for key, value in new_data.items():
+            if value and not contact_record.get(key):
+                contact_record[key] = value
+
+    required_fields = {
+        'name': 'Full name',
+        'phone': 'Phone number',
+        'email': 'Email address',
+        'birthday': 'Birthday (YYYY-MM-DD)',
+        'family_members': 'Family members',
+        'description': 'Description',
+    }
+
+    # If we're processing a follow-up turn (existing_data was provided),
+    # then do not ask again for missing fields; simply ask for confirmation.
+    if existing_data:
+        return {
+            "message": (
+                f"Please confirm the contact information:\n{json.dumps(contact_record, indent=2)}\n"
+                "Reply 'yes' or 'y' to confirm."
+            ),
+            "status": "needs_confirmation",
+            "contact_data": contact_record
+        }
+
+    # Otherwise (first turn) prompt for any missing fields.
+    missing = {field: label for field, label in required_fields.items() if not contact_record.get(field)}
+    if missing:
+        return {
+            "message": (
+                "Missing information for: " + ", ".join(missing.values()) +
+                ". Please provide these details."
+            ),
+            "status": "missing_fields",
+            "contact_data": contact_record
+        }
+
+    # If no fields are missing initially, ask for confirmation right away.
+    return {
+        "message": (
+            f"Please confirm the contact information:\n{json.dumps(contact_record, indent=2)}\n"
+            "Reply 'yes' or 'y' to confirm."
+        ),
+        "status": "needs_confirmation",
+        "contact_data": contact_record
+    }
 
 
 def prompt_for_missing_fields(contact: dict, required_fields: dict) -> dict:
