@@ -4,117 +4,136 @@ from twilio.rest import Client
 from fastapi.responses import Response
 import logging
 import os
-from agents.text_parser import parse_message
-from supabase_client import insert_contact
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Configure logging with more detail
+# For contact creation
+from agents.text_parser import parse_message
+
+# For interactions
+from agents.interactions_agent import handle_interaction_message
+
+# Insert new contacts
+from supabase_client import insert_contact
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 load_dotenv()
 
-# Get and verify Twilio credentials
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
 
-# Verify credentials are loaded
 if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
-    raise ValueError(
-        "Missing Twilio credentials. Please check TWILIO_ACCOUNT_SID, "
-        "TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in your .env file"
-    )
+    raise ValueError("Missing Twilio credentials. Check .env")
 
-logger.info(f"Initialized with Twilio number: {TWILIO_PHONE_NUMBER}")
-
-# Initialize Twilio client
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 app = FastAPI()
 
-# Store temporary contact data between messages
+# Store partial contact data for your existing creation flow
 contact_storage = {}
 
 @app.post("/sms")
 async def receive_sms(request: Request, Body: str = Form(...), From: str = Form(...)):
-    logger.info("=" * 50)
-    logger.info(f"Received SMS - From: {From}, Body: {Body}")
-    logger.info(f"Current contact_storage state: {contact_storage}")
-
-    # Preserve original message casing (for names, emails, etc.)
     message = Body.strip()
-    sender = From  # Use as key in contact_storage
-    state_entry = contact_storage.get(sender)
+    sender = From
+    logger.info(f"Received SMS from {sender}: {message}")
+
+    # Very basic phrase check for "with" => an interaction
+    possible_interaction_phrases = [
+        "had a chat with",
+        "call with",
+        "spoke with",
+        "spoke to",
+        "met with",
+        "had coffee with",
+        "had lunch with",
+        "had a call with",
+    ]
+    lower_msg = message.lower()
 
     try:
-        # Check if we are waiting for confirmation (i.e. all fields have been gathered)
-        if state_entry and state_entry.get("state") == "awaiting_confirmation":
-            if message.lower() in ['yes', 'y']:
-                logger.info("Confirmation received, inserting contact")
-                insert_result = insert_contact(state_entry["contact_data"])
-                logger.info(f"Insert result: {insert_result}")
-                del contact_storage[sender]
-                response_message = "Contact saved successfully!"
-            elif message.lower() in ['no', 'n']:
-                logger.info("Confirmation denied, clearing storage")
-                del contact_storage[sender]
-                response_message = "Contact creation cancelled. Please start over."
-            else:
-                # Assume additional data is provided to update the contact.
-                logger.info("Additional data received while awaiting confirmation, updating contact info.")
-                existing_data = state_entry["contact_data"]
-                result = parse_message(message, existing_data)
-                new_state = "awaiting_confirmation" if result["status"] == "needs_confirmation" else "awaiting_fields"
-                contact_storage[sender] = {"contact_data": result["contact_data"], "state": new_state}
-                response_message = result["message"]
+        if any(p in lower_msg for p in possible_interaction_phrases):
+            # Interaction flow
+            response_message = handle_interaction_message(message)
         else:
-            # Not yet in the confirmation state; process the incoming message as new info or missing info.
-            existing_data = state_entry["contact_data"] if state_entry else {}
-            result = parse_message(message, existing_data)
-            new_state = "awaiting_confirmation" if result["status"] == "needs_confirmation" else "awaiting_fields"
-            contact_storage[sender] = {"contact_data": result["contact_data"], "state": new_state}
-            response_message = result["message"]
+            # Contact creation flow (existing logic)
+            state_entry = contact_storage.get(sender)
+            if state_entry and state_entry.get("state") == "awaiting_confirmation":
+                # Possibly confirming
+                if message.lower() in ["yes", "y"]:
+                    insert_result = insert_contact(state_entry["contact_data"])
+                    del contact_storage[sender]
+                    if insert_result and "error" not in insert_result:
+                        response_message = "Contact saved successfully!"
+                    else:
+                        response_message = f"Error saving contact: {insert_result.get('error','unknown error')}"
+                elif message.lower() in ["no", "n"]:
+                    del contact_storage[sender]
+                    response_message = "Contact creation cancelled."
+                else:
+                    existing_data = state_entry["contact_data"]
+                    parse_result = parse_message(message, existing_data)
+                    new_state = (
+                        "awaiting_confirmation" 
+                        if parse_result["status"] == "needs_confirmation" 
+                        else "awaiting_fields"
+                    )
+                    contact_storage[sender] = {
+                        "contact_data": parse_result["contact_data"],
+                        "state": new_state
+                    }
+                    response_message = parse_result["message"]
+            else:
+                # Start new contact flow
+                existing_data = state_entry["contact_data"] if state_entry else {}
+                parse_result = parse_message(message, existing_data)
+                new_state = (
+                    "awaiting_confirmation" 
+                    if parse_result["status"] == "needs_confirmation" 
+                    else "awaiting_fields"
+                )
+                contact_storage[sender] = {
+                    "contact_data": parse_result["contact_data"],
+                    "state": new_state
+                }
+                response_message = parse_result["message"]
 
-        logger.info(f"Final contact_storage state: {contact_storage}")
-        logger.info(f"Sending response: {response_message}")
-
-        # Send SMS using Twilio client
+        # Send Twilio SMS back
         twilio_client.messages.create(
             body=response_message,
             from_=TWILIO_PHONE_NUMBER,
             to=sender
         )
-        logger.info("Message sent successfully")
 
+        # Return TwiML
+        twiml_resp = MessagingResponse()
+        twiml_resp.message(response_message)
         return Response(
-            content=str(MessagingResponse().message(response_message)),
+            content=str(twiml_resp),
             media_type="application/xml",
             headers={"Content-Type": "application/xml; charset=utf-8"}
         )
 
     except Exception as e:
-        logger.error(f"Error processing message: {str(e)}", exc_info=True)
-        error_message = "Sorry, there was an error processing your message. Please try again."
-        
+        logger.error(f"Error processing SMS: {e}", exc_info=True)
+        error_message = "Sorry, there was an error. Please try again."
+
         twilio_client.messages.create(
             body=error_message,
             from_=TWILIO_PHONE_NUMBER,
             to=sender
         )
-        
+
+        twiml_resp = MessagingResponse()
+        twiml_resp.message(error_message)
         return Response(
-            content=str(MessagingResponse().message(error_message)),
+            content=str(twiml_resp),
             media_type="application/xml",
             headers={"Content-Type": "application/xml; charset=utf-8"}
         )
-
-if __name__ == "__main__":
-    import uvicorn
-    # Run the app on localhost:8000
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

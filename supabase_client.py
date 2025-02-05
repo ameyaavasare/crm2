@@ -19,16 +19,21 @@ supabase = create_client(supabase_url, supabase_key)
 def insert_contact(contact_data: Dict) -> Dict:
     """
     Insert a contact record into Supabase contacts table.
-    
-    Args:
-        contact_data (Dict): Dictionary containing contact information
-        
-    Returns:
-        Dict: The inserted record or error information
     """
     try:
         response = supabase.table('contacts').insert(contact_data).execute()
         return response.data[0] if response.data else {}
     except Exception as e:
         print(f"Error inserting contact: {e}")
+        return {"error": str(e)}
+
+def insert_interaction(interaction_data: Dict) -> Dict:
+    """
+    Insert an interaction record into Supabase interactions table.
+    """
+    try:
+        response = supabase.table('interactions').insert(interaction_data).execute()
+        return response.data[0] if response.data else {}
+    except Exception as e:
+        print(f"Error inserting interaction: {e}")
         return {"error": str(e)}
