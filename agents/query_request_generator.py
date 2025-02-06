@@ -6,9 +6,10 @@ import openai
 import logging
 import re
 from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def parse_nl_query(user_query: str) -> dict:
     )
 
     try:
-        resp = openai.ChatCompletion.create(
+        resp = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -67,7 +68,7 @@ def parse_nl_query(user_query: str) -> dict:
         logger.error(f"GPT parse error or JSON decode error: {e}")
         plan = {}
 
-    # If GPT gave us something but it’s missing keys, fill them with None
+    # If GPT gave us something but it's missing keys, fill them with None
     for key in ["contact_name", "start_date", "end_date", "limit", "sort"]:
         if key not in plan:
             plan[key] = None
@@ -89,7 +90,7 @@ def parse_nl_query(user_query: str) -> dict:
                 plan["limit"] = 1
                 plan["sort"] = "desc"
 
-    # 2) If there's "with <name>" but GPT didn’t parse a contact_name
+    # 2) If there's "with <name>" but GPT didn't parse a contact_name
     if not plan["contact_name"]:
         # quick guess: "with X"
         match_with_name = re.search(r"with\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)", user_query, re.IGNORECASE)
@@ -116,7 +117,7 @@ def finalize_results_with_gpt(user_query: str, interactions: list) -> str:
         "results": interactions
     }
     try:
-        resp = openai.ChatCompletion.create(
+        resp = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},

@@ -35,7 +35,8 @@ def parse_interaction_name(message: str) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.0
+            temperature=0.0,
+            response_format={ "type": "json_object" }  # Force JSON response
         )
         raw = response.choices[0].message.content.strip()
         data = json.loads(raw)

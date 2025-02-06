@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from dateutil import parser as date_parser
 from dotenv import load_dotenv
-import openai
+from openai import OpenAI
 
 # We only need supabase_client if we were to insert directly, 
 # but your code uses insert_contact in main flow.
@@ -14,8 +14,8 @@ import openai
 
 load_dotenv()
 
-# Always use gpt-4o-2024-08-06
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Initialize OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MODEL_NAME = "gpt-4o-2024-08-06"
 MAX_TOKENS = 150
 TEMPERATURE = 0.0
@@ -83,7 +83,7 @@ def parse_contact_message(message: str) -> dict:
     )
 
     try:
-        resp = openai.ChatCompletion.create(
+        resp = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
                 {

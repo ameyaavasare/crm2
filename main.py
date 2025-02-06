@@ -69,27 +69,19 @@ def classify_for_query(message: str) -> bool:
         "If the user is asking about retrieving or listing interactions, output 'query'.\n"
         "If not, output 'noquery'."
     )
-    system_prompt = base_system_prompt + few_shot_snippet
-    user_prompt = f"Message: {message}\nReturn JSON: {{\"label\": \"query\" or \"noquery\"}}"
 
     try:
-        resp = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=CLASSIFIER_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": base_system_prompt + few_shot_snippet},
+                {"role": "user", "content": message}
             ],
-            temperature=0.1,
-            max_tokens=2048
+            temperature=0.0,
+            max_tokens=10
         )
-        raw = resp.choices[0].message.content.strip()
-        data = {}
-        try:
-            data = json.loads(raw)
-        except:
-            pass
-        label = data.get("label", "noquery")
-        return (label.lower() == "query")
+        output = response.choices[0].message.content.strip().lower()
+        return output == "query"
     except Exception as e:
         logger.error(f"Error in classify_for_query: {e}")
         return False
