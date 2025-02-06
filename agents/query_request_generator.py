@@ -59,7 +59,7 @@ def parse_nl_query(user_query: str) -> dict:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=300
+            max_tokens=2048
         )
         raw_json = resp.choices[0].message.content.strip()
         plan = json.loads(raw_json)

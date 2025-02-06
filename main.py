@@ -79,8 +79,8 @@ def classify_for_query(message: str) -> bool:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.0,
-            max_tokens=50
+            temperature=0.1,
+            max_tokens=2048
         )
         raw = resp.choices[0].message.content.strip()
         data = {}

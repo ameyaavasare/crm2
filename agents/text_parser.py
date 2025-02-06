@@ -24,17 +24,36 @@ logger = logging.getLogger(__name__)
 
 def format_phone_number(phone: str) -> str:
     """
-    Convert phone to E.164 format if possible.
+    Convert phone numbers to E.164 format.
+    Handles international numbers with various formats:
+    - US/Canada: +1XXXXXXXXXX
+    - International: +[country_code][number]
+    - Numbers with or without + prefix
+    - Numbers with spaces, dashes, parentheses
     """
     if not phone:
         return None
-    digits = re.sub(r'\D', '', phone)
-    if len(digits) == 10:
-        return f"+1{digits}"
-    elif len(digits) == 11 and digits.startswith("1"):
-        return f"+{digits}"
-    elif len(digits) > 11:
-        return f"+{digits}"
+        
+    # Remove all non-digit characters except '+'
+    cleaned = ''.join(char for char in phone if char.isdigit() or char == '+')
+    
+    # If number already starts with +, just remove any spaces and return
+    if cleaned.startswith('+'):
+        return cleaned
+    
+    # If number starts with 00 (international prefix), replace with +
+    if cleaned.startswith('00'):
+        return f"+{cleaned[2:]}"
+        
+    # Handle US/Canada numbers (default if 10 digits)
+    if len(cleaned) == 10:
+        return f"+1{cleaned}"
+    
+    # If it starts with a country code (no +), add the +
+    # Common country codes are 1-3 digits
+    if len(cleaned) > 10:
+        return f"+{cleaned}"
+        
     return None
 
 def parse_contact_message(message: str) -> dict:
@@ -43,33 +62,69 @@ def parse_contact_message(message: str) -> dict:
     Return that as a dict or empty on failure.
     """
     prompt = (
-        "You are a data extraction assistant. The user wants to create or update a contact. "
-        "Extract these fields in JSON:\n"
-        "- name\n"
-        "- phone\n"
-        "- email\n"
-        "- birthday (YYYY-MM-DD)\n"
-        "- family_members (comma-separated)\n"
-        "- description\n"
-        "If not found, put null.\n"
-        f"Message: '{message}'\n"
-        "Output JSON only with these keys."
+        "Extract contact information from this message. Format the response as valid JSON with these exact keys:\n"
+        "{\n"
+        '  "name": "full name",\n'
+        '  "phone": "phone number in E.164 format (e.g., +66625319066 for Thai numbers)",\n'
+        '  "email": "email address",\n'
+        '  "birthday": "YYYY-MM-DD",\n'
+        '  "family_members": "comma-separated list or null",\n'
+        '  "description": "brief description"\n'
+        "}\n\n"
+        "Rules:\n"
+        "1. Use null for missing fields\n"
+        "2. Format birthday as YYYY-MM-DD\n"
+        "3. Include any location or status info in description\n"
+        "4. For phone numbers:\n"
+        "   - Remove spaces, dashes, and parentheses\n"
+        "   - Keep the + prefix\n"
+        "   - For Thai numbers (+66), ensure format is +66XXXXXXXXX\n"
+        f"Message: {message}"
     )
+
     try:
         resp = openai.ChatCompletion.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for data extraction."},
+                {
+                    "role": "system", 
+                    "content": "You are a contact information extraction assistant. Always return valid JSON. For phone numbers, always use E.164 format (e.g., +66625319066 for Thai numbers)."
+                },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE,
+            temperature=0.0,
+            max_tokens=2048,
+            response_format={ "type": "json_object" }  # Force JSON response
         )
+        
         raw = resp.choices[0].message.content.strip()
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        
+        # Ensure all required fields exist
+        required_fields = ["name", "phone", "email", "birthday", "family_members", "description"]
+        for field in required_fields:
+            if field not in parsed:
+                parsed[field] = None
+        
+        # Additional validation for phone number
+        if parsed.get("phone"):
+            # Ensure phone starts with +
+            if not parsed["phone"].startswith("+"):
+                parsed["phone"] = "+" + parsed["phone"]
+                
+        return parsed
+        
     except Exception as e:
         logger.error(f"Error parsing contact: {e}")
-        return {}
+        # Return a valid empty dict with all required fields
+        return {
+            "name": None,
+            "phone": None,
+            "email": None,
+            "birthday": None,
+            "family_members": None,
+            "description": None
+        }
 
 def prepare_contact_for_supabase(message: str) -> dict:
     """

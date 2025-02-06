@@ -51,7 +51,7 @@ def verify_classification(message: str, initial_label: str) -> bool:
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.0,
-            max_tokens=30
+            max_tokens=2048
         )
         raw = response.choices[0].message.content.strip()
         data = json.loads(raw)
