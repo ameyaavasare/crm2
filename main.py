@@ -160,11 +160,6 @@ async def receive_sms(request: Request, Body: str = Form(...), From: str = Form(
 
             del classification_storage[sender]
 
-        twilio_client.messages.create(
-            body=response_message,
-            from_=TWILIO_PHONE_NUMBER,
-            to=sender
-        )
         twiml_resp = MessagingResponse()
         twiml_resp.message(response_message)
         return Response(
@@ -257,13 +252,6 @@ async def receive_sms(request: Request, Body: str = Form(...), From: str = Form(
                     }
                     response_message = parse_result["message"]
 
-        # Send Twilio SMS
-        twilio_client.messages.create(
-            body=response_message,
-            from_=TWILIO_PHONE_NUMBER,
-            to=sender
-        )
-
         # Return TwiML
         twiml_resp = MessagingResponse()
         twiml_resp.message(response_message)
@@ -276,11 +264,6 @@ async def receive_sms(request: Request, Body: str = Form(...), From: str = Form(
     except Exception as e:
         logger.error(f"Error processing SMS: {e}", exc_info=True)
         error_message = "Sorry, there was an error. Please try again."
-        twilio_client.messages.create(
-            body=error_message,
-            from_=TWILIO_PHONE_NUMBER,
-            to=sender
-        )
         twiml_resp = MessagingResponse()
         twiml_resp.message(error_message)
         return Response(
